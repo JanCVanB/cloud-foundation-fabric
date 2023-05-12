@@ -65,9 +65,12 @@ locals {
       },
     ]...)
   }
+  vpc_sc_bridge_names = {
+    for v in var.vpc_sc_bridges : "${v.from}_to_${v.to}" => v
+  }
   vpc_sc_bridge_resources = {
-    for v in var.vpc_sc_bridges :
-    "${v.from}_to_${v.to}" => sort(toset(flatten([
+    for k, v in local.vpc_sc_bridge_names :
+    k => sort(toset(flatten([
       local.vpc_sc_perimeter_resources[v.from],
       local.vpc_sc_perimeter_resources[v.to],
     ])))
@@ -144,43 +147,36 @@ module "vpc-sc" {
   egress_policies  = local.vpc_sc_egress_policies
   ingress_policies = local.vpc_sc_ingress_policies
   # bridge perimeters
-  service_perimeters_bridge = merge(
-    [
-      for v in var.vpc_sc_bridges :
-      # landing to other perimtere, only we have projects in landing and corresponding perimeters
-      local.vpc_sc_counts[v.from] * local.vpc_sc_counts[v.to] == 0 ? {} : {
-        "${v.from}_to_${v.to}" = {
-          spec_resources = (
-            local.vpc_sc_explicit_dry_run_spec
-            ? local.vpc_sc_bridge_resources["${v.from}_to_${v.to}"]
-            : null
-          )
-          status_resources = (
-            local.vpc_sc_explicit_dry_run_spec
-            ? null
-            : local.vpc_sc_bridge_resources["${v.from}_to_${v.to}"]
-          )
-          use_explicit_dry_run_spec = local.vpc_sc_explicit_dry_run_spec
-        }
-      }
-  ]...)
+  service_perimeters_bridge = {
+    for k, v in local.vpc_sc_bridge_names : k => {
+      spec_resources = (
+        local.vpc_sc_explicit_dry_run_spec
+        ? local.vpc_sc_bridge_resources[k]
+        : null
+      )
+      status_resources = (
+        local.vpc_sc_explicit_dry_run_spec
+        ? null
+        : local.vpc_sc_bridge_resources[k]
+      )
+      use_explicit_dry_run_spec = local.vpc_sc_explicit_dry_run_spec
+    } if local.vpc_sc_counts[v.from] * local.vpc_sc_counts[v.to] > 0
+  }
   # regular type perimeters
-  service_perimeters_regular = merge([
-    # if we have projects in var.vpc_sc_perimeter_projects[key]
-    for k, v in local.vpc_sc_perimeters_spec_status : local.vpc_sc_counts[k] == 0 ? {} : {
-      "${k}" = {
-        spec = (
-          local.vpc_sc_explicit_dry_run_spec
-          ? local.vpc_sc_perimeters_spec_status[k]
-          : null
-        )
-        status = (
-          local.vpc_sc_explicit_dry_run_spec
-          ? null
-          : local.vpc_sc_perimeters_spec_status[k]
-        )
-        use_explicit_dry_run_spec = local.vpc_sc_explicit_dry_run_spec
-      }
+  service_perimeters_regular = {
+    for k, v in local.vpc_sc_perimeters_spec_status : "${k}" => {
+      spec = (
+        local.vpc_sc_explicit_dry_run_spec
+        ? local.vpc_sc_perimeters_spec_status[k]
+        : null
+      )
+      status = (
+        local.vpc_sc_explicit_dry_run_spec
+        ? null
+        : local.vpc_sc_perimeters_spec_status[k]
+      )
+      use_explicit_dry_run_spec = local.vpc_sc_explicit_dry_run_spec
     }
-  ]...)
+    if local.vpc_sc_counts[k] > 0
+  }
 }
