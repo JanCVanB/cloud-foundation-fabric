@@ -39,7 +39,6 @@ locals {
     for k in flatten(values(data.google_projects.project_by_ids)[*].projects) :
     k.project_id => "projects/${k.number}"
   }
-  _vpc_sc_landing_bridges = setproduct(["landing"], ["dev", "prod"])
   # define dry run spec at file level for convenience
   vpc_sc_explicit_dry_run_spec = true
   # compute perimeter bridge resources (projects)
@@ -67,10 +66,10 @@ locals {
     ]...)
   }
   vpc_sc_bridge_resources = {
-    for p in local._vpc_sc_landing_bridges :
-    "${p.0}_to_${p.1}" => sort(toset(flatten([
-      local.vpc_sc_perimeter_resources[p.0],
-      local.vpc_sc_perimeter_resources[p.1],
+    for v in var.vpc_sc_bridges :
+    "${v.from}_to_${v.to}" => sort(toset(flatten([
+      local.vpc_sc_perimeter_resources[v.from],
+      local.vpc_sc_perimeter_resources[v.to],
     ])))
   }
   vpc_sc_egress_policies = {
@@ -147,19 +146,19 @@ module "vpc-sc" {
   # bridge perimeters
   service_perimeters_bridge = merge(
     [
-      for p in local._vpc_sc_landing_bridges :
+      for v in var.vpc_sc_bridges :
       # landing to other perimtere, only we have projects in landing and corresponding perimeters
-      local.vpc_sc_counts[p.0] * local.vpc_sc_counts[p.1] == 0 ? {} : {
-        "${p.0}_to_${p.1}" = {
+      local.vpc_sc_counts[v.from] * local.vpc_sc_counts[v.to] == 0 ? {} : {
+        "${v.from}_to_${v.to}" = {
           spec_resources = (
             local.vpc_sc_explicit_dry_run_spec
-            ? local.vpc_sc_bridge_resources["${p.0}_to_${p.1}"]
+            ? local.vpc_sc_bridge_resources["${v.from}_to_${v.to}"]
             : null
           )
           status_resources = (
             local.vpc_sc_explicit_dry_run_spec
             ? null
-            : local.vpc_sc_bridge_resources["${p.0}_to_${p.1}"]
+            : local.vpc_sc_bridge_resources["${v.from}_to_${v.to}"]
           )
           use_explicit_dry_run_spec = local.vpc_sc_explicit_dry_run_spec
         }
@@ -167,7 +166,7 @@ module "vpc-sc" {
   ]...)
   # regular type perimeters
   service_perimeters_regular = merge([
-    # if we have projects in var.vpc_sc_perimeter_projects.dev
+    # if we have projects in var.vpc_sc_perimeter_projects[key]
     for k, v in local.vpc_sc_perimeters_spec_status : local.vpc_sc_counts[k] == 0 ? {} : {
       "${k}" = {
         spec = (
