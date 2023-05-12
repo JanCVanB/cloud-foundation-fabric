@@ -161,6 +161,8 @@ variable "vpc_sc_egress_policies" {
         service_name     = string
       })), [])
       resources              = optional(list(string))
+      project_ids            = optional(list(string), [])
+      folder_ids             = optional(list(string), [])
       resource_type_external = optional(bool, false)
     })
   }))
@@ -176,13 +178,17 @@ variable "vpc_sc_ingress_policies" {
       identity_type = optional(string)
       identities    = optional(list(string))
       resources     = optional(list(string), [])
+      project_ids   = optional(list(string), [])
+      folder_ids    = optional(list(string), [])
     })
     to = object({
       operations = optional(list(object({
         method_selectors = optional(list(string))
         service_name     = string
       })), [])
-      resources = optional(list(string))
+      resources   = optional(list(string))
+      project_ids = optional(list(string), [])
+      folder_ids  = optional(list(string), [])
     })
   }))
   default  = {}
@@ -197,18 +203,24 @@ variable "vpc_sc_perimeters" {
       egress_policies  = optional(list(string), [])
       ingress_policies = optional(list(string), [])
       resources        = optional(list(string), [])
+      project_ids      = optional(list(string), [])
+      folder_ids       = optional(list(string), [])
     }), {})
     landing = optional(object({
       access_levels    = optional(list(string), [])
       egress_policies  = optional(list(string), [])
       ingress_policies = optional(list(string), [])
       resources        = optional(list(string), [])
+      project_ids      = optional(list(string), [])
+      folder_ids       = optional(list(string), [])
     }), {})
     prod = optional(object({
       access_levels    = optional(list(string), [])
       egress_policies  = optional(list(string), [])
       ingress_policies = optional(list(string), [])
       resources        = optional(list(string), [])
+      project_ids      = optional(list(string), [])
+      folder_ids       = optional(list(string), [])
     }), {})
   })
   default  = {}
