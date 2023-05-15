@@ -15,65 +15,26 @@
  */
 
 locals {
-  _vpc_sc_vpc_accessible_services = null
-  _vpc_sc_restricted_services = yamldecode(
-    file("${path.module}/vpc-sc-restricted-services.yaml")
-  )
-  _vpc_sc_resources_lookup_folders = { for i, v in toset(flatten([
-    [for v in var.vpc_sc_perimeters : v.folder_ids],
-    [for v in var.vpc_sc_egress_policies : v.to.folder_ids],
-    [for v in var.vpc_sc_ingress_policies : v.to.folder_ids],
-    [for v in var.vpc_sc_ingress_policies : v.from.folder_ids],
-  ])) : i => v }
-  _vpc_sc_resources_lookup_projects = { for i, v in chunklist(sort(toset(flatten([
-    [for v in var.vpc_sc_perimeters : v.project_ids],
-    [for v in var.vpc_sc_egress_policies : v.to.project_ids],
-    [for v in var.vpc_sc_ingress_policies : v.to.project_ids],
-    [for v in var.vpc_sc_ingress_policies : v.from.project_ids],
-  ]))), 50) : i => v }
-  _vpc_sc_resources_projects_by_folders = {
-    for k in local._vpc_sc_resources_lookup_folders :
-    k => formatlist("projects/%s", data.google_projects.project_by_folders[k].projects[*].number)
-  }
-  _vpc_sc_resources_projects_by_ids = {
-    for k in flatten(values(data.google_projects.project_by_ids)[*].projects) :
-    k.project_id => "projects/${k.number}"
-  }
   # define dry run spec at file level for convenience
   vpc_sc_explicit_dry_run_spec = true
-  # compute perimeter bridge resources (projects)
-  vpc_sc_perimeter_resources = {
-    for k, v in var.vpc_sc_perimeters : k => sort(toset(flatten([
-      v.resources,
-      [for f in v.folder_ids : local._vpc_sc_resources_projects_by_folders[f]],
-      [for p in v.project_ids : local._vpc_sc_resources_projects_by_ids[p]]
-    ])))
-  }
-  # compute the number of projects in each perimeter to detect which to create
-  vpc_sc_counts = {
-    for k, v in local.vpc_sc_perimeter_resources : k => length(v)
-  }
   vpc_sc_perimeters_spec_status = {
     for k, v in var.vpc_sc_perimeters : k => merge([
       v,
       {
-        resources               = local.vpc_sc_perimeter_resources[k]
+        resources               = local._vpc_sc_perimeter_resources[k]
         restricted_services     = local._vpc_sc_restricted_services
         vpc_accessible_services = local._vpc_sc_vpc_accessible_services
         project_ids             = null
         folder_ids              = null
       },
-    ]...)
+    ]...) if local._vpc_sc_counts[k] > 0
   }
-  vpc_sc_bridge_names = {
-    for v in var.vpc_sc_bridges : "${v.from}_to_${v.to}" => v
-  }
-  vpc_sc_bridge_resources = {
-    for k, v in local.vpc_sc_bridge_names :
-    k => sort(toset(flatten([
-      local.vpc_sc_perimeter_resources[v.from],
-      local.vpc_sc_perimeter_resources[v.to],
-    ])))
+  vpc_sc_bridges_spec_status = {
+    for v in var.vpc_sc_bridges : "${v.from}_to_${v.to}" =>
+    sort(toset(flatten([
+      local._vpc_sc_perimeter_resources[v.from],
+      local._vpc_sc_perimeter_resources[v.to],
+    ]))) if local._vpc_sc_counts[v.from] * local._vpc_sc_counts[v.to] > 0
   }
   vpc_sc_egress_policies = {
     for k, v in var.vpc_sc_egress_policies :
@@ -124,20 +85,10 @@ locals {
   }
 }
 
-data "google_projects" "project_by_ids" {
-  for_each = local._vpc_sc_resources_lookup_projects
-  filter   = "(${join(" OR ", formatlist("id=%s", each.value))}) AND lifecycleState:ACTIVE"
-}
-
-data "google_projects" "project_by_folders" {
-  for_each = local._vpc_sc_resources_lookup_folders
-  filter   = "parent.type=folder parent.id=${each.value} AND lifecycleState:ACTIVE"
-}
-
 module "vpc-sc" {
   source = "../modules/vpc-sc"
   # only enable if we have projects defined for perimeters
-  count         = anytrue([for k, v in local.vpc_sc_counts : v > 0]) ? 1 : 0
+  count         = length(keys(local.vpc_sc_perimeters_spec_status)) > 0 ? 1 : 0
   access_policy = null
   access_policy_create = {
     parent = "organizations/${var.organization.id}"
@@ -148,35 +99,26 @@ module "vpc-sc" {
   ingress_policies = local.vpc_sc_ingress_policies
   # bridge perimeters
   service_perimeters_bridge = {
-    for k, v in local.vpc_sc_bridge_names : k => {
+    for k, v in local.vpc_sc_bridges_spec_status : k => {
       spec_resources = (
-        local.vpc_sc_explicit_dry_run_spec
-        ? local.vpc_sc_bridge_resources[k]
-        : null
+        local.vpc_sc_explicit_dry_run_spec ? v : null
       )
       status_resources = (
-        local.vpc_sc_explicit_dry_run_spec
-        ? null
-        : local.vpc_sc_bridge_resources[k]
-      )
-      use_explicit_dry_run_spec = local.vpc_sc_explicit_dry_run_spec
-    } if local.vpc_sc_counts[v.from] * local.vpc_sc_counts[v.to] > 0
-  }
-  # regular type perimeters
-  service_perimeters_regular = {
-    for k, v in local.vpc_sc_perimeters_spec_status : "${k}" => {
-      spec = (
-        local.vpc_sc_explicit_dry_run_spec
-        ? local.vpc_sc_perimeters_spec_status[k]
-        : null
-      )
-      status = (
-        local.vpc_sc_explicit_dry_run_spec
-        ? null
-        : local.vpc_sc_perimeters_spec_status[k]
+        local.vpc_sc_explicit_dry_run_spec ? null : v
       )
       use_explicit_dry_run_spec = local.vpc_sc_explicit_dry_run_spec
     }
-    if local.vpc_sc_counts[k] > 0
+  }
+  # regular type perimeters
+  service_perimeters_regular = {
+    for k, v in local.vpc_sc_perimeters_spec_status : k => {
+      spec = (
+        local.vpc_sc_explicit_dry_run_spec ? v : null
+      )
+      status = (
+        local.vpc_sc_explicit_dry_run_spec ? null : v
+      )
+      use_explicit_dry_run_spec = local.vpc_sc_explicit_dry_run_spec
+    }
   }
 }

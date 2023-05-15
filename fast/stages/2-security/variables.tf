@@ -215,15 +215,6 @@ variable "vpc_sc_bridges" {
     from = string
     to   = string
   }))
-  default = [
-    {
-      from = "landing"
-      to   = "dev"
-    },
-    {
-      from = "landing"
-      to   = "prod"
-    },
-  ]
+  default  = []
   nullable = false
 }
